@@ -2,276 +2,596 @@
   <div class="register-container">
     <el-card>
       <template #header>
-        <span>挂号管理</span>
+        <span>预约挂号</span>
       </template>
 
-      <!-- 搜索栏 -->
-      <el-form :inline="true" :model="searchForm" class="search-form">
-        <el-form-item label="患者ID">
-          <el-input v-model.number="searchForm.patientId" placeholder="请输入患者ID" clearable />
-        </el-form-item>
-        <el-form-item label="医生ID">
-          <el-input v-model.number="searchForm.doctorId" placeholder="请输入医生ID" clearable />
-        </el-form-item>
-        <el-form-item label="科室ID">
-          <el-input v-model.number="searchForm.deptId" placeholder="请输入科室ID" clearable />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="searchVisits">查询</el-button>
-          <el-button @click="resetSearch">重置</el-button>
-        </el-form-item>
-      </el-form>
+      <!-- 步骤条 -->
+      <el-steps
+        :active="activeStep"
+        finish-status="success"
+        align-center
+        style="margin-bottom: 40px"
+      >
+        <el-step title="选择科室" />
+        <el-step title="选择医生" />
+        <el-step title="选择时段" />
+        <el-step title="确认挂号" />
+      </el-steps>
 
-      <!-- 新增挂号按钮 -->
-      <div style="margin-bottom: 16px;">
-        <el-button type="primary" @click="showCreateDialog">新增挂号</el-button>
+      <!-- ========== Step 1: 选择科室 ========== -->
+      <div v-show="activeStep === 0" class="step-content">
+        <h3 class="step-title">请选择就诊科室</h3>
+        <el-row :gutter="20" v-loading="loadingDepartments">
+          <el-col
+            v-for="dept in departmentList"
+            :key="dept.id"
+            :span="6"
+            :xs="12"
+            :sm="8"
+            :md="6"
+            style="margin-bottom: 16px"
+          >
+            <el-card
+              :class="['dept-card', { selected: selectedDept?.id === dept.id }]"
+              shadow="hover"
+              @click="selectDepartment(dept)"
+            >
+              <div class="dept-name">{{ dept.deptName }}</div>
+              <div class="dept-info">{{ dept.manager ? '主任: ' + dept.manager : '' }}</div>
+              <div class="dept-info">{{ dept.location || '' }}</div>
+            </el-card>
+          </el-col>
+        </el-row>
+        <div v-if="!loadingDepartments && departmentList.length === 0" class="empty-tip">
+          暂无可用科室
+        </div>
       </div>
 
-      <!-- 就诊记录表格 -->
-      <el-table :data="visitList" border stripe v-loading="loading">
-        <el-table-column prop="id" label="就诊ID" width="80" />
-        <el-table-column prop="patientId" label="患者ID" width="80" />
-        <el-table-column prop="doctorId" label="医生ID" width="80" />
-        <el-table-column prop="deptId" label="科室ID" width="80" />
-        <el-table-column prop="visitDate" label="就诊日期" width="120" />
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="getStatusType(row.status)">{{ getStatusText(row.status) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="diagnosis" label="诊断" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="createTime" label="创建时间" width="160" />
-        <el-table-column label="操作" width="150" fixed="right">
-          <template #default="{ row }">
-            <el-button type="primary" size="small" link @click="viewDetail(row)">详情</el-button>
-            <el-button
-              v-if="row.status === 0"
-              type="danger"
-              size="small"
-              link
-              @click="handleDelete(row)"
-            >取消</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <!-- ========== Step 2: 选择医生 ========== -->
+      <div v-show="activeStep === 1" class="step-content">
+        <h3 class="step-title">
+          <el-button type="text" @click="goBack(0)">&lt; 返回</el-button>
+          选择医生 - {{ selectedDept?.deptName }}
+        </h3>
+        <el-row :gutter="20" v-loading="loadingDoctors">
+          <el-col
+            v-for="doctor in doctorList"
+            :key="doctor.id"
+            :span="8"
+            :xs="24"
+            :sm="12"
+            :md="8"
+            style="margin-bottom: 16px"
+          >
+            <el-card
+              :class="['doctor-card', { selected: selectedDoctor?.id === doctor.id }]"
+              shadow="hover"
+              @click="selectDoctor(doctor)"
+            >
+              <div class="doctor-avatar">
+                <el-avatar :size="60" icon="UserFilled" />
+              </div>
+              <div class="doctor-name">{{ doctor.name }}</div>
+              <div class="doctor-info">职称: {{ doctor.title || '未知' }}</div>
+              <div class="doctor-info"
+                >{{ doctor.gender || '' }} {{ doctor.age ? doctor.age + '岁' : '' }}</div
+              >
+            </el-card>
+          </el-col>
+        </el-row>
+        <div v-if="!loadingDoctors && doctorList.length === 0" class="empty-tip">
+          该科室暂无医生
+        </div>
+      </div>
 
-      <!-- 分页 -->
-      <div class="pagination">
-        <el-pagination
-          v-model:current-page="pageParams.pageNo"
-          v-model:page-size="pageParams.pageSize"
-          :total="total"
-          :page-sizes="[10, 20, 50, 100]"
-          layout="total, sizes, prev, pager, next, jumper"
-          @size-change="loadVisitList"
-          @current-change="loadVisitList"
-        />
+      <!-- ========== Step 3: 选择日期和时段 ========== -->
+      <div v-show="activeStep === 2" class="step-content">
+        <h3 class="step-title">
+          <el-button type="text" @click="goBack(1)">&lt; 返回</el-button>
+          选择就诊时段 - {{ selectedDoctor?.name }}
+        </h3>
+
+        <!-- 日期选择 -->
+        <div class="date-section" v-loading="loadingDates">
+          <h4>选择日期</h4>
+          <el-radio-group v-model="selectedDate" @change="onDateChange">
+            <el-radio-button v-for="d in scheduleDates" :key="d" :value="d">
+              {{ formatDate(d) }}
+            </el-radio-button>
+          </el-radio-group>
+        </div>
+
+        <!-- 时段选择 -->
+        <div v-if="selectedDate" class="schedule-section" v-loading="loadingSchedules">
+          <h4>选择时段</h4>
+          <el-row :gutter="16">
+            <el-col
+              v-for="sched in scheduleList"
+              :key="sched.id"
+              :span="8"
+              :xs="12"
+              :sm="8"
+              :md="6"
+              style="margin-bottom: 12px"
+            >
+              <el-card
+                :class="['schedule-card', { selected: selectedSchedule?.id === sched.id }]"
+                shadow="hover"
+                @click="selectSchedule(sched)"
+              >
+                <div class="schedule-period">{{ sched.period }}</div>
+                <div class="schedule-num">
+                  剩余
+                  <span :class="sched.availableNum <= 3 ? 'num-warning' : ''">{{
+                    sched.availableNum
+                  }}</span>
+                  / {{ sched.totalNum }}
+                </div>
+              </el-card>
+            </el-col>
+          </el-row>
+          <div v-if="!loadingSchedules && scheduleList.length === 0" class="empty-tip">
+            该日期无可用号源
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== Step 4: 确认挂号 ========== -->
+      <div v-show="activeStep === 3" class="step-content">
+        <h3 class="step-title">
+          <el-button type="text" @click="goBack(2)">&lt; 返回</el-button>
+          确认挂号信息
+        </h3>
+
+        <el-form
+          ref="confirmFormRef"
+          :model="confirmForm"
+          :rules="formRules"
+          label-width="120px"
+          class="confirm-form"
+        >
+          <el-form-item label="就诊科室">
+            <el-input :model-value="selectedDept?.deptName" disabled />
+          </el-form-item>
+          <el-form-item label="就诊医生">
+            <el-input :model-value="selectedDoctor?.name" disabled />
+          </el-form-item>
+          <el-form-item label="医生职称">
+            <el-input :model-value="selectedDoctor?.title || '未知'" disabled />
+          </el-form-item>
+          <el-form-item label="就诊日期">
+            <el-input :model-value="formatDate(selectedDate)" disabled />
+          </el-form-item>
+          <el-form-item label="就诊时段">
+            <el-input :model-value="selectedSchedule?.period" disabled />
+          </el-form-item>
+          <el-form-item label="患者ID" prop="patientId">
+            <el-input v-model.number="confirmForm.patientId" placeholder="请输入患者ID" />
+          </el-form-item>
+          <el-form-item label="就诊原因">
+            <el-input
+              v-model="confirmForm.reason"
+              type="textarea"
+              :rows="2"
+              placeholder="可选，描述就诊原因"
+            />
+          </el-form-item>
+          <el-form-item>
+            <el-button
+              type="primary"
+              size="large"
+              @click="submitAppointment"
+              :loading="submitting"
+              style="width: 200px"
+            >
+              确认挂号
+            </el-button>
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <!-- 底部操作按钮 -->
+      <div class="step-actions" v-if="activeStep < 3">
+        <el-button v-if="activeStep > 0" @click="goBack(activeStep - 1)">上一步</el-button>
+        <el-button v-if="activeStep < 2" type="primary" :disabled="!canNext" @click="nextStep"
+          >下一步</el-button
+        >
+        <el-button
+          v-if="activeStep === 2"
+          type="primary"
+          :disabled="!selectedSchedule"
+          @click="nextStep"
+          >下一步</el-button
+        >
       </div>
     </el-card>
-
-    <!-- 新增挂号弹窗 -->
-    <el-dialog v-model="createDialogVisible" title="新增挂号" width="500px">
-      <el-form :model="createForm" label-width="100px">
-        <el-form-item label="患者ID" required>
-          <el-input v-model.number="createForm.patientId" placeholder="请输入患者ID" />
-        </el-form-item>
-        <el-form-item label="医生ID" required>
-          <el-input v-model.number="createForm.doctorId" placeholder="请输入医生ID" />
-        </el-form-item>
-        <el-form-item label="科室ID" required>
-          <el-input v-model.number="createForm.deptId" placeholder="请输入科室ID" />
-        </el-form-item>
-        <el-form-item label="就诊日期" required>
-          <el-date-picker v-model="createForm.visitDate" type="date" placeholder="选择日期" value-format="YYYY-MM-DD" style="width: 100%;" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="createDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitCreate" :loading="creating">确定挂号</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 详情弹窗 -->
-    <el-dialog v-model="detailVisible" title="就诊详情" width="500px">
-      <div v-if="currentVisit">
-        <el-descriptions :column="2" border>
-          <el-descriptions-item label="就诊ID">{{ currentVisit.id }}</el-descriptions-item>
-          <el-descriptions-item label="状态">
-            <el-tag :type="getStatusType(currentVisit.status)">{{ getStatusText(currentVisit.status) }}</el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="患者ID">{{ currentVisit.patientId }}</el-descriptions-item>
-          <el-descriptions-item label="医生ID">{{ currentVisit.doctorId }}</el-descriptions-item>
-          <el-descriptions-item label="科室ID">{{ currentVisit.deptId }}</el-descriptions-item>
-          <el-descriptions-item label="就诊日期">{{ currentVisit.visitDate }}</el-descriptions-item>
-          <el-descriptions-item label="诊断结果" :span="2">{{ currentVisit.diagnosis || '暂无' }}</el-descriptions-item>
-        </el-descriptions>
-      </div>
-    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { getVisitPage, getVisit, createVisit, deleteVisit } from '@/api/hospital/visit'
+import { ref, reactive, computed, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
+import {
+  createAppointment,
+  getDepartmentListForAppointment,
+  getDoctorListForAppointment,
+  getScheduleListForAppointment,
+  getScheduleDatesForAppointment
+} from '@/api/hospital/appointment'
 
-// 搜索表单
-const searchForm = reactive({
+// 步骤状态
+const activeStep = ref(0)
+
+// 科室列表
+const departmentList = ref([])
+const loadingDepartments = ref(false)
+const selectedDept = ref(null)
+
+// 医生列表
+const doctorList = ref([])
+const loadingDoctors = ref(false)
+const selectedDoctor = ref(null)
+
+// 排班数据
+const scheduleDates = ref([])
+const loadingDates = ref(false)
+const selectedDate = ref('')
+const scheduleList = ref([])
+const loadingSchedules = ref(false)
+const selectedSchedule = ref(null)
+
+// 确认表单
+const confirmForm = reactive({
   patientId: undefined,
-  doctorId: undefined,
-  deptId: undefined
+  reason: ''
 })
 
-// 分页参数
-const pageParams = reactive({
-  pageNo: 1,
-  pageSize: 10
+// 表单引用和校验规则
+const confirmFormRef = ref() // 用于绑定 el-form
+
+const formRules = reactive({
+  patientId: [
+    { required: true, message: '请输入患者ID', trigger: 'blur' },
+    { type: 'number', message: '患者ID必须为数字', trigger: 'change' }
+  ]
+})
+// ===========================================
+
+const submitting = ref(false)
+
+// 是否可以进入下一步
+const canNext = computed(() => {
+  if (activeStep.value === 0) return selectedDept.value !== null
+  if (activeStep.value === 1) return selectedDoctor.value !== null
+  if (activeStep.value === 2) return selectedSchedule.value !== null
+  return false
 })
 
-const total = ref(0)
-const loading = ref(false)
-const visitList = ref([])
-const detailVisible = ref(false)
-const currentVisit = ref(null)
-const createDialogVisible = ref(false)
-const creating = ref(false)
-
-const createForm = reactive({
-  patientId: undefined,
-  doctorId: undefined,
-  deptId: undefined,
-  visitDate: ''
-})
-
-// 获取状态文本
-const getStatusText = (status) => {
-  const map = { 0: '待就诊', 1: '就诊中', 2: '已完成', 3: '已取消' }
-  return map[status] ?? '未知'
+// 格式化日期
+const formatDate = (dateStr) => {
+  if (!dateStr) return ''
+  const d = new Date(dateStr)
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+  const weekday = weekdays[d.getDay()]
+  return `${month}月${day}日 ${weekday}`
 }
 
-// 获取状态标签类型
-const getStatusType = (status) => {
-  const map = { 0: 'warning', 1: 'primary', 2: 'success', 3: 'danger' }
-  return map[status] ?? 'info'
-}
-
-// 加载就诊记录列表
-const loadVisitList = async () => {
-  loading.value = true
+// 加载科室列表
+const loadDepartments = async () => {
+  loadingDepartments.value = true
   try {
-    const res = await getVisitPage({ ...searchForm, ...pageParams })
-    visitList.value = res.list || []
-    total.value = res.total || 0
+    const res = await getDepartmentListForAppointment()
+    departmentList.value = res || []
   } catch (e) {
-    console.error('加载就诊记录失败', e)
-    ElMessage.error('加载就诊记录失败')
+    console.error('加载科室列表失败', e)
+    ElMessage.error('加载科室列表失败')
   } finally {
-    loading.value = false
+    loadingDepartments.value = false
   }
 }
 
-// 搜索
-const searchVisits = () => {
-  pageParams.pageNo = 1
-  loadVisitList()
+// 选择科室
+const selectDepartment = (dept) => {
+  selectedDept.value = dept
+  selectedDoctor.value = null
+  selectedSchedule.value = null
+  selectedDate.value = ''
+  scheduleList.value = []
+  nextStep()
 }
 
-// 重置搜索
-const resetSearch = () => {
-  searchForm.patientId = undefined
-  searchForm.doctorId = undefined
-  searchForm.deptId = undefined
-  searchVisits()
-}
-
-// 查看详情
-const viewDetail = async (row) => {
+// 加载医生列表
+const loadDoctors = async () => {
+  if (!selectedDept.value) return
+  loadingDoctors.value = true
   try {
-    const res = await getVisit(row.id)
-    currentVisit.value = res
-    detailVisible.value = true
+    const res = await getDoctorListForAppointment(selectedDept.value.id)
+    doctorList.value = res || []
   } catch (e) {
-    console.error('获取就诊详情失败', e)
-    ElMessage.error('获取就诊详情失败')
-  }
-}
-
-// 显示新增挂号弹窗
-const showCreateDialog = () => {
-  createForm.patientId = undefined
-  createForm.doctorId = undefined
-  createForm.deptId = undefined
-  createForm.visitDate = ''
-  createDialogVisible.value = true
-}
-
-// 提交新增挂号
-const submitCreate = async () => {
-  if (!createForm.patientId) {
-    ElMessage.warning('请填写患者ID')
-    return
-  }
-  if (!createForm.doctorId) {
-    ElMessage.warning('请填写医生ID')
-    return
-  }
-  if (!createForm.deptId) {
-    ElMessage.warning('请填写科室ID')
-    return
-  }
-  if (!createForm.visitDate) {
-    ElMessage.warning('请选择就诊日期')
-    return
-  }
-
-  try {
-    creating.value = true
-    await createVisit(createForm)
-    ElMessage.success('挂号成功！')
-    createDialogVisible.value = false
-    loadVisitList()
-  } catch (e) {
-    console.error('挂号失败', e)
-    ElMessage.error('挂号失败，请重试')
+    console.error('加载医生列表失败', e)
+    ElMessage.error('加载医生列表失败')
   } finally {
-    creating.value = false
+    loadingDoctors.value = false
   }
 }
 
-// 取消挂号
-const handleDelete = async (row) => {
+// 选择医生
+const selectDoctor = (doctor) => {
+  selectedDoctor.value = doctor
+  selectedSchedule.value = null
+  selectedDate.value = ''
+  scheduleList.value = []
+  scheduleDates.value = []
+  loadScheduleDates()
+  nextStep()
+}
+
+// 加载排班日期
+const loadScheduleDates = async () => {
+  if (!selectedDoctor.value) return
+  loadingDates.value = true
   try {
-    await ElMessageBox.confirm('确定要取消该挂号吗？', '提示', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning'
-    })
-    await deleteVisit(row.id)
-    ElMessage.success('已取消')
-    loadVisitList()
-  } catch {
-    // 取消操作
+    const res = await getScheduleDatesForAppointment(selectedDoctor.value.id)
+    scheduleDates.value = res || []
+    if (scheduleDates.value.length > 0) {
+      selectedDate.value = scheduleDates.value[0]
+      loadSchedules()
+    }
+  } catch (e) {
+    console.error('加载排班日期失败', e)
+    ElMessage.error('加载排班日期失败')
+  } finally {
+    loadingDates.value = false
   }
+}
+
+// 日期切换时加载排班
+const onDateChange = (date) => {
+  selectedSchedule.value = null
+  loadSchedules()
+}
+
+// 加载排班列表
+const loadSchedules = async () => {
+  if (!selectedDoctor.value || !selectedDate.value) return
+  loadingSchedules.value = true
+  try {
+    const res = await getScheduleListForAppointment(selectedDoctor.value.id, selectedDate.value)
+    scheduleList.value = res || []
+  } catch (e) {
+    console.error('加载排班列表失败', e)
+    ElMessage.error('加载排班列表失败')
+  } finally {
+    loadingSchedules.value = false
+  }
+}
+
+// 选择排班时段
+const selectSchedule = (sched) => {
+  selectedSchedule.value = sched
+}
+
+// 下一步
+const nextStep = () => {
+  if (activeStep.value === 0 && !selectedDept.value) return
+  if (activeStep.value === 1 && !selectedDoctor.value) return
+  if (activeStep.value === 2 && !selectedSchedule.value) return
+
+  activeStep.value++
+
+  // 加载对应步骤的数据
+  if (activeStep.value === 1) {
+    loadDoctors()
+  }
+}
+
+// 返回上一步
+const goBack = (step) => {
+  activeStep.value = step
+}
+
+// 提交挂号
+const submitAppointment = async () => {
+  // 前置表单合法性校验拦截
+  if (!confirmFormRef.value) return
+
+  await confirmFormRef.value.validate(async (valid) => {
+    if (!valid) {
+      ElMessage.warning('请先正确填写必填项（患者ID需为纯数字）')
+      return
+    }
+
+    submitting.value = true
+    try {
+      await createAppointment({
+        patientId: confirmForm.patientId,
+        doctorId: selectedDoctor.value.id,
+        deptId: selectedDept.value.id,
+        scheduleId: selectedSchedule.value.id,
+        reason: confirmForm.reason
+      })
+      ElMessage.success('挂号成功！')
+
+      // 重置表单
+      resetAll()
+    } catch (e) {
+      console.error('挂号失败', e)
+      // 精准捕获并弹出后端拦截器抛出的友好提示
+      const errorMsg = e?.response?.data?.msg || e?.response?.data?.message || '挂号失败，请重试'
+      ElMessage.error(errorMsg)
+      // =========================================================
+    } finally {
+      submitting.value = false
+    }
+  })
+}
+
+// 重置所有数据
+const resetAll = () => {
+  activeStep.value = 0
+  selectedDept.value = null
+  selectedDoctor.value = null
+  selectedDate.value = ''
+  selectedSchedule.value = null
+  scheduleDates.value = []
+  scheduleList.value = []
+  confirmForm.patientId = undefined
+  confirmForm.reason = ''
 }
 
 // 初始化
 onMounted(() => {
-  loadVisitList()
+  loadDepartments()
 })
 </script>
 
 <style scoped>
 .register-container {
   padding: 20px;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
-.search-form {
+.step-content {
+  min-height: 300px;
+  padding: 10px 0;
+}
+
+.step-title {
   margin-bottom: 20px;
+  font-size: 16px;
+  color: #333;
 }
 
-.pagination {
-  margin-top: 20px;
-  display: flex;
-  justify-content: flex-end;
+.empty-tip {
+  text-align: center;
+  padding: 60px 0;
+  color: #999;
+  font-size: 14px;
+}
+
+/* 科室卡片 */
+.dept-card {
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.2s;
+  border: 2px solid transparent;
+}
+
+.dept-card:hover {
+  transform: translateY(-2px);
+}
+
+.dept-card.selected {
+  border-color: #409eff;
+  background-color: #ecf5ff;
+}
+
+.dept-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.dept-info {
+  font-size: 12px;
+  color: #999;
+  line-height: 1.6;
+}
+
+/* 医生卡片 */
+.doctor-card {
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.2s;
+  border: 2px solid transparent;
+}
+
+.doctor-card:hover {
+  transform: translateY(-2px);
+}
+
+.doctor-card.selected {
+  border-color: #409eff;
+  background-color: #ecf5ff;
+}
+
+.doctor-avatar {
+  margin-bottom: 10px;
+}
+
+.doctor-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 6px;
+}
+
+.doctor-info {
+  font-size: 12px;
+  color: #999;
+  line-height: 1.6;
+}
+
+/* 日期选择 */
+.date-section {
+  margin-bottom: 24px;
+}
+
+.date-section h4,
+.schedule-section h4 {
+  font-size: 14px;
+  color: #666;
+  margin-bottom: 12px;
+}
+
+/* 时段卡片 */
+.schedule-card {
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.2s;
+  border: 2px solid transparent;
+}
+
+.schedule-card:hover {
+  transform: translateY(-2px);
+}
+
+.schedule-card.selected {
+  border-color: #409eff;
+  background-color: #ecf5ff;
+}
+
+.schedule-period {
+  font-size: 18px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 6px;
+}
+
+.schedule-num {
+  font-size: 12px;
+  color: #999;
+}
+
+.num-warning {
+  color: #f56c6c;
+  font-weight: 600;
+}
+
+/* 确认表单 */
+.confirm-form {
+  max-width: 500px;
+  margin: 0 auto;
+}
+
+/* 底部按钮 */
+.step-actions {
+  margin-top: 30px;
+  text-align: center;
+  padding: 20px 0;
 }
 </style>

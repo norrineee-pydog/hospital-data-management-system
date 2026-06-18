@@ -36,4 +36,7 @@ public interface ErrorCodeConstants {
 
     // ========== 挂号预约相关错误码 1004001000 开头 ==========
     ErrorCode VISIT_STATUS_CANT_CANCEL = new ErrorCode(1004001001, "当前状态无法取消挂号");
+    ErrorCode SCHEDULE_NOT_EXISTS = new ErrorCode(1004001002, "排班不存在");
+    ErrorCode SCHEDULE_NO_AVAILABLE = new ErrorCode(1004001003, "号源已满");
+    ErrorCode VISIT_DUPLICATE = new ErrorCode(1004001004, "您已预约过该时段，请勿重复挂号！");  // ← 添加这一行
 }

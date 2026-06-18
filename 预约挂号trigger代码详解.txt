@@ -1,0 +1,150 @@
+ 好的，我直接把触发器讲透。
+
+  ---
+  你的触发器是什么？
+
+  它是挂在 hospital_visit（就诊记录表）上的一个 BEFORE INSERT 触发器。
+
+  翻译成人话：每次有人往就诊表里插入一条挂号记录之前，数据库会自动执行一段你写的代码，把对应医生那个时段的剩余号量减 1。
+  
+  ---
+  它做了什么？（用白话讲）
+
+  一个患者挂号的过程：
+
+  1. 前端提交挂号 → 后端插一条记录到 hospital_visit 表
+  2. 插入之前，触发器自动拦截，执行三件事：
+    - ① 找到这条挂号对应的排班记录（schedule_id），锁住这一行（不让别人同时改）
+    - ② 检查还有没有号（available_num > 0？）
+        - 有号 → 继续
+      - 没号 → 直接报错，拒绝插入（挂号失败）
+    - ③ 把剩余号量减 1（available_num = available_num - 1）
+  3. 触发器执行完 → INSERT 真正写入数据库 → 挂号成功
+
+  ---
+  怎么实现的？（逐行拆解）
+
+  第一步：创建触发器函数
+
+  CREATE OR REPLACE FUNCTION trg_func_visit_before_insert()
+  RETURNS TRIGGER AS
+  $$
+  DECLARE
+      v_available int4;          -- 声明一个变量，用来存剩余号量
+  BEGIN
+
+  CREATE OR REPLACE FUNCTION 是 openGauss（PostgreSQL）的函数语法。RETURNS TRIGGER 表示这是一个触发器函数。
+
+  ---
+  第二步：只处理有关联排班的记录
+
+      IF NEW.schedule_id IS NOT NULL THEN
+
+  NEW 是触发器的特殊变量，代表即将被插入的那一行数据。NEW.schedule_id 就是这条挂号记录关联的排班 ID。
+
+  如果 schedule_id 为空（比如旧数据），就跳过，什么都不做。
+
+  ---
+  第三步：查排班 + 锁行（最核心的一行！）
+
+          SELECT available_num INTO v_available
+          FROM hospital_doctor_schedule
+          WHERE id = NEW.schedule_id AND deleted = 0
+          FOR UPDATE;
+
+  这一行做了两件事：
+
+  查：根据 schedule_id 查出当前剩余号量，存到 v_available 变量里。
+
+  锁：FOR UPDATE 是行级排他锁。我举个例子解释为什么需要它：
+
+  假设只剩 1 个号，两个人同时挂号：
+
+  没有 FOR UPDATE 的情况（会超卖）：
+    事务A: 读到 available_num = 1  →  检查通过  →  减为 0
+    事务B: 读到 available_num = 1  →  检查通过  →  减为 -1  ← 超卖了！
+
+  有 FOR UPDATE 的情况（安全）：
+    事务A: 读到 available_num = 1  →  同时锁住这一行
+    事务B: 想读这一行 → 被阻塞！必须等事务A提交后才能读
+    事务A: 减为 0 → COMMIT → 释放锁
+    事务B: 终于读到 available_num = 0 → 检查失败 → 报错"号源已满"
+
+  这就是 FOR UPDATE 的威力：谁先拿到锁谁先操作，其他人排队等着，保证不会同时读到同一个数。
+
+  ---
+  第四步：检查排班是否存在
+
+          IF NOT FOUND THEN
+              RAISE EXCEPTION '排班记录不存在 (schedule_id: %)', NEW.schedule_id;
+          END IF;
+
+  如果 SELECT 没找到记录，FOUND 就是 false，直接抛异常。触发器抛异常 = INSERT 被回滚 = 挂号失败。
+
+  ---
+  第五步：检查号源是否已满
+
+          IF v_available <= 0 THEN
+              RAISE EXCEPTION '该时段号源已满，无法挂号';
+          END IF;
+
+  读到的剩余号量 ≤ 0，就报错拒绝。这是最后一道防线。
+
+  ---
+  第六步：扣减号量
+
+          UPDATE hospital_doctor_schedule
+          SET available_num = available_num - 1,
+              update_time = CURRENT_TIMESTAMP
+          WHERE id = NEW.schedule_id AND deleted = 0;
+
+  把剩余号量减 1。这里用的是 available_num = available_num - 1 而不是直接赋值，因为读的时候已经锁了行，所以这里的值一定是正确的。
+
+  ---
+  第七步：放行
+
+      END IF;
+      RETURN NEW;
+  END;
+
+  RETURN NEW 告诉数据库：检查通过了，INSERT 可以继续执行。如果不 return（比如上面抛异常了），INSERT 就不会发生。
+
+  ---
+  最后：把函数挂到表上
+
+  CREATE TRIGGER trg_visit_before_insert
+      BEFORE INSERT ON hospital_visit    -- 在 hospital_visit 表每次 INSERT 之前
+      FOR EACH ROW                       -- 每插入一行就触发一次
+      EXECUTE FUNCTION trg_func_visit_before_insert();
+
+  ┌──────────────────┬──────────────────────────────┐
+  │      关键词      │             含义             │
+  ├──────────────────┼──────────────────────────────┤
+  │ BEFORE INSERT    │ 数据写进磁盘之前执行，拦得住 │
+  ├──────────────────┼──────────────────────────────┤
+  │ FOR EACH ROW     │ 行级触发，插几行就执行几次   │
+  ├──────────────────┼──────────────────────────────┤
+  │ EXECUTE FUNCTION │ 指定要执行的触发器函数       │
+  └──────────────────┴──────────────────────────────┘
+
+  ---
+  一图总结
+
+  患者挂号 → POST /create → Java 插入 hospital_visit
+                                ↓
+                      ┌─────────────────────┐
+                      │  触发器 (BEFORE INSERT) │
+                      │                     │
+                      │ ① SELECT ... FOR UPDATE │ ← 查排班 + 锁行
+                      │ ② 排班存在吗？          │ ← 不存在 → 报错回滚
+                      │ ③ 还有号吗？(>0)       │ ← 没了 → 报错回滚
+                      │ ④ available_num - 1    │ ← 扣减号源
+                      │                     │
+                      └─────────────────────┘
+                                ↓
+                                ↓
+                          INSERT 成功写入
+                                ↓
+                          挂号成功！
+
+  三个字总结你的触发器：拦、查、扣。 在 INSERT 之前拦住，检查号源够不够，够了就扣掉一个号再放行。FOR UPDATE 锁保证并发安全，不会超卖。

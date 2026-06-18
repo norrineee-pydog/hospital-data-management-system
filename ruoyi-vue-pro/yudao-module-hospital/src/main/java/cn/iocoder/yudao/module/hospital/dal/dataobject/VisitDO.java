@@ -26,4 +26,5 @@ public class VisitDO extends BaseDO {
     private String diagnosis;
     private String notes;
     private String status;
+    private Long scheduleId;
 }

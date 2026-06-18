@@ -24,6 +24,16 @@ const hospitalRoutes = {
       }
     },
     {
+      path: 'appointment',
+      component: () => import('@/views/hospital/appointment/index.vue'),
+      name: 'HospitalAppointment',
+      meta: {
+        title: '预约挂号',
+        icon: 'ep:calendar',
+        noCache: false
+      }
+    },
+    {
       path: 'my-registration',
       component: () => import('@/views/hospital/my-registration/index.vue'),
       name: 'HospitalMyRegistration',

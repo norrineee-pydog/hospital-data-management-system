@@ -1,50 +1,32 @@
 import request from '@/config/axios'
 
-export interface BedVO {
-  id: number
-  wardId: number
-  bedNumber: string
-  status: number
+// 创建挂号
+export const createAppointment = (data: {
   patientId: number
-  createTime: Date
+  doctorId: number
+  deptId: number
+  scheduleId: number
+  reason?: string
+}) => {
+  return request.post({ url: '/hospital/appointment/create', data })
 }
 
-// 获取床位分页列表
-export const getBedPage = (params: any) => {
-  return request.get({ url: '/hospital/bed/page', params })
+// 获取科室列表（挂号用）
+export const getDepartmentListForAppointment = () => {
+  return request.get({ url: '/hospital/appointment/get-department-list' })
 }
 
-// 获取床位详情
-export const getBed = (id: number) => {
-  return request.get({ url: '/hospital/bed/get?id=' + id })
+// 获取某科室下的医生列表
+export const getDoctorListForAppointment = (deptId: number) => {
+  return request.get({ url: '/hospital/appointment/get-doctor-list?deptId=' + deptId })
 }
 
-// 创建床位
-export const createBed = (data: BedVO) => {
-  return request.post({ url: '/hospital/bed/create', data })
+// 获取某医生某日期的可用排班
+export const getScheduleListForAppointment = (doctorId: number, date: string) => {
+  return request.get({ url: '/hospital/appointment/get-schedule-list?doctorId=' + doctorId + '&date=' + date })
 }
 
-// 修改床位
-export const updateBed = (data: BedVO) => {
-  return request.put({ url: '/hospital/bed/update', data })
-}
-
-// 删除床位
-export const deleteBed = (id: number) => {
-  return request.delete({ url: '/hospital/bed/delete?id=' + id })
-}
-
-// 获取某病房下的床位列表
-export const getBedListByWardId = (wardId: number) => {
-  return request.get({ url: '/hospital/bed/list-by-ward?wardId=' + wardId })
-}
-
-// 床位分配
-export const assignBed = (bedId: number, patientId: number) => {
-  return request.put({ url: '/hospital/bed/assign?bedId=' + bedId + '&patientId=' + patientId })
-}
-
-// 床位释放
-export const releaseBed = (bedId: number) => {
-  return request.put({ url: '/hospital/bed/release?bedId=' + bedId })
+// 获取某医生的所有排班日期
+export const getScheduleDatesForAppointment = (doctorId: number) => {
+  return request.get({ url: '/hospital/appointment/get-schedule-dates?doctorId=' + doctorId })
 }
